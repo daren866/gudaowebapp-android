@@ -63,7 +63,9 @@ private const val BRIDGE_SHIM = """
 @Composable
 fun MainActivityContent() {
     val context = LocalContext.current
-    (context as? android.app.Activity)?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    if (context is android.app.Activity) {
+        context.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),
