@@ -24,11 +24,11 @@ kotlin {
 }
 
 android {
-    namespace = "com.gudaoweb.app"
+    namespace = "com.gudao.coderandroid"
     compileSdk = libs.versions.compile.sdk.get().toInt()
 
     defaultConfig {
-        applicationId = "com.gudaoweb.app"
+        applicationId = "com.gudao.coderandroid"
         minSdk = libs.versions.min.sdk.get().toInt()
         targetSdk = libs.versions.target.sdk.get().toInt()
         versionCode = gitCommitsCount
@@ -56,7 +56,7 @@ android {
 }
 
 base {
-    archivesName.set("Gudaoweb-v${android.defaultConfig.versionName}(${android.defaultConfig.versionCode})")
+    archivesName.set("GudaoCode-v${android.defaultConfig.versionName}(${android.defaultConfig.versionCode})")
 }
 
 dependencies {

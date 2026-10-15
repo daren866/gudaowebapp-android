@@ -1,177 +1,148 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>古道 Web 测试</title>
-    <style>
-        body { margin: 0; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; }
-        h1 { color: #333; margin-bottom: 8px; }
-        .subtitle { color: #666; font-size: 14px; margin-bottom: 24px; }
-        .section { background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-        .section-title { font-size: 16px; font-weight: bold; color: #333; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
-        button { margin-top: 8px; padding: 10px 20px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
-        button.primary { background-color: #66CCFF; color: white; }
-        button.primary:hover { background-color: #55BBEE; }
-        button.secondary { background-color: #f0f0f0; color: #333; }
-        button.secondary:hover { background-color: #e0e0e0; }
-        .button-group { display: flex; flex-wrap: wrap; gap: 8px; }
-        textarea { margin-top: 12px; width: 100%; padding: 12px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; min-height: 100px; resize: vertical; }
-        .status { margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 14px; }
-        .status.success { background-color: #e8f5e9; color: #2e7d32; }
-        .status.error { background-color: #ffebee; color: #c62828; }
-        .status.info { background-color: #e3f2fd; color: #1565c0; }
-        canvas { margin-top: 12px; border: 2px dashed #ddd; border-radius: 8px; }
-        .preview-img { margin-top: 12px; max-width: 100%; border-radius: 8px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>古道 Web 框架</h1>
-        <p class="subtitle">测试页面 - 图片保存到相册功能</p>
+<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=0.6"><meta name="google" value="notranslate"><meta name="description" content="TurboWarp is a Scratch mod with a compiler to run projects faster, dark mode for your eyes, a bunch of addons to improve the editor, and more."/><title>TurboWarp - Run Scratch projects faster</title><link rel="apple-touch-icon" href="images/apple-touch-icon.png"><link rel="manifest" href="manifest.webmanifest"><style>.splash-screen {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      }
+      .splash-screen[hidden] {
+        display: none;
+      }
+      .splash-screen[data-theme="dark"] {
+        background-color: #333;
+        color: white;
+      }
+      .splash-screen > * {
+        max-width: 80%;
+      }
+      .splash-spinner:after {
+        content: " ";
+        display: block;
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        border: 6px solid;
+        border-color: currentColor transparent currentColor transparent;
+        animation: splash-spinner 1.2s linear infinite;
+      }
+      @keyframes splash-spinner {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .splash-error-title {
+        font-weight: bold;
+      }
+      .splash-error-title a {
+        color: inherit;
+      }
+      .splash-errors {
+        font-family: monospace;
+      }
+      .splash-error-list {
+        white-space: pre-wrap;
+      }
+      .splash-reset {
+        color: inherit;
+        background: none;
+        padding: 0;
+        margin: 0;
+        border: none;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .splash-reset:disabled {
+        opacity: 0.8;
+      }</style></head><body><noscript><div class="splash-screen"><div><h1>TurboWarp requires JavaScript</h1><p>Consider using <a href="https://desktop.turbowarp.org/">TurboWarp Desktop</a> if you are afraid of remote JavaScript.</p></div></div></noscript><div class="splash-screen spash-waiting-for-js" hidden><div class="splash-spinner"></div><div class="splash-error-title" hidden>Something went wrong. <a href="https://scratch.mit.edu/users/GarboMuffin/#comments" target="_blank" rel="noreferrer">Please report</a> with the information below.</div><div class="splash-errors" hidden></div><button class="splash-reset" hidden>Click here to reset caches (can fix some errors)</button></div><script>(function () {
+        'use strict';
 
-        <div class="section">
-            <div class="section-title">📱 函数测试</div>
-            <button class="primary" onclick="testDialog()">测试对话框</button>
-        </div>
+        var theme = '';
+        var accent = '#ff4c4c';
 
-        <div class="section">
-            <div class="section-title">🎨 状态栏颜色</div>
-            <div class="button-group">
-                <button class="secondary" onclick="setStatusBar('#FFFFFF')">白色</button>
-                <button class="primary" onclick="setStatusBar('#66CCFF')">蓝色</button>
-                <button class="secondary" onclick="setStatusBar('#333333')">黑色</button>
-                <button class="secondary" onclick="setStatusBar('#FF5722')">橙色</button>
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">📝 文件读写</div>
-            <textarea id="fileContent" placeholder="输入文件内容..."></textarea>
-            <div class="button-group">
-                <button class="primary" onclick="saveFile()">保存文件</button>
-                <button class="secondary" onclick="loadFile()">读取文件</button>
-            </div>
-            <div id="fileStatus" class="status"></div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">🖼️ 图片保存测试</div>
-            <p style="color: #666; font-size: 14px; margin-bottom: 8px;">点击下方按钮将生成的测试图片保存到相册 DCIM/gudaoweb/ 目录</p>
-            <canvas id="testCanvas" width="200" height="200"></canvas>
-            <div class="button-group">
-                <button class="primary" onclick="saveImage()">保存图片到相册</button>
-                <button class="secondary" onclick="generateTestImage()">重新生成图片</button>
-            </div>
-            <div id="imageStatus" class="status"></div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">🔗 Base64 输入测试</div>
-            <textarea id="base64Input" placeholder="粘贴 base64 图片数据（支持 data:image/ 前缀）..." rows="6"></textarea>
-            <button class="primary" onclick="saveBase64Image()">保存自定义图片</button>
-            <div id="base64Status" class="status"></div>
-        </div>
-    </div>
-
-    <script>
-        function showStatus(id, message, type) {
-            var status = document.getElementById(id);
-            status.innerHTML = message;
-            status.className = 'status ' + (type || 'info');
+        try {
+          var themeSetting = localStorage.getItem('tw:theme');
+        } catch (e) {
+          // ignore
         }
-
-        function testDialog() {
-            dialog('这是一个测试对话框，用于验证 JavaScript 与原生交互功能是否正常工作。', '测试函数');
-        }
-
-        function setStatusBar(color) {
-            statusbar.color(color);
-            showStatus('fileStatus', '状态栏颜色已设置为: ' + color, 'success');
-        }
-
-        function saveFile() {
-            var content = document.getElementById('fileContent').value;
-            if (!content) {
-                showStatus('fileStatus', '请输入文件内容', 'error');
-                return;
+        if (themeSetting === 'light') {
+          theme = 'light';
+        } else if (themeSetting === 'dark') {
+          theme = 'dark';
+        } else if (themeSetting) {
+          try {
+            var parsed = JSON.parse(themeSetting);
+            if (parsed.accent === 'purple') {
+              accent = '#855cd6';
+            } else if (parsed.accent === 'blue') {
+              accent = '#4c97ff';
             }
-            file.write('test.txt', content, function(error, result) {
-                if (error) {
-                    showStatus('fileStatus', '保存失败: ' + error, 'error');
-                } else {
-                    showStatus('fileStatus', '保存成功: ' + result, 'success');
-                }
-            });
-        }
-
-        function loadFile() {
-            file.read('test.txt', function(error, content) {
-                if (error) {
-                    showStatus('fileStatus', '读取失败: ' + error, 'error');
-                } else {
-                    showStatus('fileStatus', '读取成功', 'success');
-                    document.getElementById('fileContent').value = content;
-                }
-            });
-        }
-
-        function generateTestImage() {
-            var canvas = document.getElementById('testCanvas');
-            var ctx = canvas.getContext('2d');
-            
-            var colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'];
-            var randomColor = colors[Math.floor(Math.random() * colors.length)];
-            
-            ctx.fillStyle = randomColor;
-            ctx.fillRect(0, 0, 200, 200);
-            
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = 'bold 24px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('测试图片', 100, 90);
-            
-            var date = new Date();
-            ctx.font = '14px Arial';
-            ctx.fillText(date.toLocaleString(), 100, 120);
-            
-            ctx.font = '12px Arial';
-            ctx.fillText('古道 Web', 100, 150);
-        }
-
-        function saveImage() {
-            var canvas = document.getElementById('testCanvas');
-            var base64Data = canvas.toDataURL('image/png');
-            showStatus('imageStatus', '正在保存图片...', 'info');
-            
-            image.save(base64Data, function(error, result) {
-                if (error) {
-                    showStatus('imageStatus', '保存失败: ' + error, 'error');
-                } else {
-                    showStatus('imageStatus', '保存成功: ' + result, 'success');
-                }
-            });
-        }
-
-        function saveBase64Image() {
-            var base64Data = document.getElementById('base64Input').value.trim();
-            if (!base64Data) {
-                showStatus('base64Status', '请输入 base64 图片数据', 'error');
-                return;
+            if (parsed.gui === 'dark' || parsed.gui === 'light') {
+              theme = parsed.gui;
             }
-            showStatus('base64Status', '正在保存图片...', 'info');
-            
-            image.save(base64Data, function(error, result) {
-                if (error) {
-                    showStatus('base64Status', '保存失败: ' + error, 'error');
-                } else {
-                    showStatus('base64Status', '保存成功: ' + result, 'success');
-                }
-            });
+          } catch (e) {
+            // ignore
+          }
         }
 
-        generateTestImage();
-    </script>
-</body>
-</html>
+        if (!theme) {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+
+        var splash = document.querySelector('.spash-waiting-for-js');
+        splash.setAttribute('data-theme', theme);
+        if (theme !== 'dark') {
+          
+            splash.style.color = accent;
+          
+        }
+        splash.hidden = false;
+
+        var splashErrorTitle = document.querySelector('.splash-error-title');
+        var splashError = document.querySelector('.splash-errors');
+        var splashReset = document.querySelector('.splash-reset');
+
+        var totalErrors = 0;
+        window.onerror = function (event, source, line, col, err) {
+          if (++totalErrors > 5) return; // dont bother logging more
+          splashErrorTitle.hidden = splashError.hidden = splashReset.hidden = false;
+          var el = document.createElement('div');
+          el.textContent = 'Error (splash) in ' + source + ' (' + line + ':' + col + '): ' + err;
+          splashError.appendChild(el);
+        };
+
+        splashReset.onclick = function () {
+          splashReset.disabled = true;
+          function hardRefresh() {
+            var search = location.search.replace(/[?&]nocache=[\d.]+(?=$|&)/, '');
+            // This is a functional cookie used so that we respond with Clear-Site-Data just once. No tracking.
+            // Can't use nocache parameter to trigger this because people might accidentally bookmark that, and
+            // then we would be clearing their cache on every visit.
+            document.cookie = 'tw_clear_cache_once=1; max-age=60; path=/; samesite=strict; secure';
+            location.replace(location.pathname + search + (search ? '&' : '?') + 'nocache=' + Math.floor(Math.random() * 10000000));
+          }
+          if ('serviceWorker' in navigator) {
+            setTimeout(hardRefresh, 5000);
+            navigator.serviceWorker.getRegistration("")
+              .then(function(registration) {
+                if (registration) {
+                  return registration.unregister();
+                }
+              })
+              .then(hardRefresh)
+              .catch(hardRefresh);
+          } else {
+            hardRefresh();
+          }
+        };
+
+        window.SplashEnd = () => {
+          splash.hidden = true;
+          window.onerror = null;
+        };
+      })();</script><div id="app"></div><script src="js/pentapod/vendors~addon-settings~credits~editor~embed~fullscreen~player.12d789ba4fea58b4ce01.js"></script><script src="js/pentapod/vendors~editor~embed~fullscreen~player.a9f6305d58b22d2c03d1.js"></script><script src="js/pentapod/addon-settings~addons~editor~fullscreen~player.7061ac67b04d055ae02d.js"></script><script src="js/pentapod/addon-settings~editor~embed~fullscreen~player.4dc74b427a2b3d623285.js"></script><script src="js/pentapod/player.6af37deb24a6e27e5526.js"></script></body></html>
