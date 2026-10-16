@@ -203,19 +203,19 @@ private class JavaScriptInterface(
         val list = parseAssets(json)
         val total = list.size
         if (total == 0) {
-            pushOfflineComplete(0, 0, 0)
+            pushOfflineComplete(0, 0, 0, 0)
             return
         }
         val executor = Executors.newFixedThreadPool(MAX_CONCURRENT)
         val done = AtomicInteger(0)
         val downloaded = AtomicInteger(0)
-        val skipped = AtomicInteger(0)
-        for ((md5ext, url) in list) {
+        val notFound = AtomicInteger(0)
+        for ((md5ext, urls) in list) {
             executor.execute {
                 var ok = false
                 try {
-                    val data = downloadBytes(url)
-                    if (data != null && isValidAsset(md5ext, data) && writeOfflineAsset(md5ext, data)) {
+                    val data = downloadFirstValid(md5ext, urls)
+                    if (data != null && writeOfflineAsset(md5ext, data)) {
                         pushOfflineAssetData(md5ext, data)
                         ok = true
                     }
@@ -223,14 +223,27 @@ private class JavaScriptInterface(
                     // 单个资产失败不阻断整体
                 }
                 val d = done.incrementAndGet()
-                if (ok) downloaded.incrementAndGet() else skipped.incrementAndGet()
-                pushOfflineProgress(d, total, skipped.get())
+                if (ok) downloaded.incrementAndGet() else notFound.incrementAndGet()
+                pushOfflineProgress(d, total, notFound.get())
                 if (d == total) {
-                    pushOfflineComplete(downloaded.get(), skipped.get(), total)
+                    pushOfflineComplete(downloaded.get(), notFound.get(), total, notFound.get())
                     executor.shutdown()
                 }
             }
         }
+    }
+
+    /** 顺序尝试各候选源，返回第一个 HTTP 200 且通过魔数校验的字节；全部失败返回 null。 */
+    private fun downloadFirstValid(md5ext: String, urls: List<String>): ByteArray? {
+        for (url in urls) {
+            val data = downloadBytes(url)
+            if (data != null && isValidAsset(md5ext, data)) {
+                android.util.Log.d("offline", "$md5ext OK <- $url")
+                return data
+            }
+        }
+        android.util.Log.d("offline", "$md5ext NOT FOUND on all sources")
+        return null
     }
 
     private fun handleOfflineGetAsset(json: String) {
@@ -321,8 +334,8 @@ private class JavaScriptInterface(
         return if (cleaned.isEmpty()) "asset.bin" else cleaned
     }
 
-    private fun parseAssets(json: String): List<Pair<String, String>> {
-        val result = mutableListOf<Pair<String, String>>()
+    private fun parseAssets(json: String): List<Pair<String, List<String>>> {
+        val result = mutableListOf<Pair<String, List<String>>>()
         val seen = mutableSetOf<String>()
         try {
             val root = JSONObject(json)
@@ -330,11 +343,21 @@ private class JavaScriptInterface(
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val md5ext = o.optString("md5ext")
-                val url = o.optString("url")
-                if (md5ext.isNotEmpty() && url.isNotEmpty() && !seen.contains(md5ext)) {
-                    seen.add(md5ext)
-                    result.add(Pair(md5ext, url))
+                if (md5ext.isEmpty() || seen.contains(md5ext)) continue
+                val urls = mutableListOf<String>()
+                val urlsArr = o.optJSONArray("urls")
+                if (urlsArr != null) {
+                    for (j in 0 until urlsArr.length()) {
+                        val u = urlsArr.optString(j)
+                        if (u.isNotEmpty()) urls.add(u)
+                    }
+                } else {
+                    val single = o.optString("url")
+                    if (single.isNotEmpty()) urls.add(single)
                 }
+                if (urls.isEmpty()) continue
+                seen.add(md5ext)
+                result.add(Pair(md5ext, urls))
             }
         } catch (_: Exception) {
             // 解析失败返回空列表
@@ -360,11 +383,12 @@ private class JavaScriptInterface(
         pushJs("window.__scratchOfflineProgress && window.__scratchOfflineProgress($json);")
     }
 
-    private fun pushOfflineComplete(downloaded: Int, skipped: Int, total: Int) {
+    private fun pushOfflineComplete(downloaded: Int, skipped: Int, total: Int, notFound: Int) {
         val json = JSONObject().apply {
             put("downloaded", downloaded)
             put("skipped", skipped)
             put("total", total)
+            put("notFound", notFound)
         }.toString()
         pushJs("window.__scratchOfflineComplete && window.__scratchOfflineComplete($json);")
     }
