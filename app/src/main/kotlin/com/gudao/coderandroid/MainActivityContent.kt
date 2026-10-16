@@ -12,7 +12,10 @@ import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -68,7 +71,10 @@ fun MainActivityContent() {
     }
 
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // 系统栏隐藏时无内边距；用户从边缘临时唤出系统栏时，WebView 自动避开不被遮挡
+            .windowInsetsPadding(WindowInsets.safeDrawing),
         factory = { ctx ->
             WebView(ctx).apply {
                 settings.apply {

@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.BufferedReader
 import java.io.File
@@ -49,8 +50,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        hideSystemBars()
         setContent {
             MainActivityContent()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // 对话框弹出/关闭等导致窗口焦点变化后，重新隐藏系统栏，保持全屏
+        if (hasFocus) hideSystemBars()
+    }
+
+    /**
+     * 沉浸式全屏：隐藏状态栏与导航栏（横屏）。
+     * BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE 允许用户从屏幕边缘临时唤出系统栏，松手后自动再隐藏。
+     */
+    private fun hideSystemBars() {
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
         }
     }
 
