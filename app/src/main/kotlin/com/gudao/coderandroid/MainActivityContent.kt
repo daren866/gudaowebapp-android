@@ -1,22 +1,35 @@
 package com.gudao.coderandroid
 
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
+import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -44,9 +57,11 @@ private val DEFAULT_PROJECT_ASSETS = setOf(
 /**
  * 注入到页面的桥接脚本（不含离线状态回推行，由 buildInjectScript 动态拼接）：
  *  - 复用既有 window 桥（dialog / statusbar / file / image）；
- *  - 定义 window.webkit.messageHandlers.{scratchSave,offlineDownload,offlineGetAsset}，
- *    其 postMessage 转调 Android.bridgePost(name, json)（Android WebView 无 iOS 的
- *    window.webkit.messageHandlers API，需此垫片让网页侧代码无需改动即可复用）。
+ *  - 重写 HTMLAnchorElement.click（与 iOS ScratchBridge.bridgeJS 同款）：编辑器「保存到电脑」
+ *    创建 blob: 链接并点击时，读取其内容为 base64，经 scratchSave 桥上报原生层保存，
+ *    阻止 WebView 默认下载行为（Android WebView 无 iOS 的 window.webkit.messageHandlers API，
+ *    下方垫片把 postMessage 转调 Android.bridgePost(name, json)，网页侧代码无需改动即可复用）；
+ *  - 定义 window.webkit.messageHandlers.{scratchSave,offlineDownload,offlineGetAsset} 垫片。
  */
 private const val BRIDGE_SHIM = """
     window.dialog = function(message, title) { Android.showDialog(title, message); };
@@ -64,6 +79,33 @@ private const val BRIDGE_SHIM = """
             postMessage: function(msg){ Android.bridgePost(n, JSON.stringify(msg)); }
         };
     });
+    (function () {
+      if (window.__scratchBridgeInstalled) return;
+      window.__scratchBridgeInstalled = true;
+      var origClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (this.download && typeof this.href === 'string' && this.href.indexOf('blob:') === 0) {
+          var name = this.download || 'project.sb3';
+          if (name.toLowerCase().indexOf('.sb3') === -1) name += '.sb3';
+          fetch(this.href)
+            .then(function (r) { return r.blob(); })
+            .then(function (blob) {
+              var reader = new FileReader();
+              reader.onloadend = function () {
+                var b64 = (reader.result || '').split(',')[1] || '';
+                if (window.webkit &&
+                    window.webkit.messageHandlers &&
+                    window.webkit.messageHandlers.scratchSave) {
+                  window.webkit.messageHandlers.scratchSave.postMessage({ name: name, data: b64 });
+                }
+              };
+              reader.readAsDataURL(blob);
+            });
+          return;
+        }
+        return origClick.apply(this, arguments);
+      };
+    })();
 """
 
 @Composable
@@ -71,6 +113,26 @@ fun MainActivityContent() {
     val context = LocalContext.current
     if (context is android.app.Activity) {
         context.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    // 「从电脑中打开」：网页 input[type=file] 触发 onShowFileChooser 时，用系统文件选择器
+    // 选取 .sb3/.sb2 作品，选中后经 filePathCallback 回传 WebView（取消时回传 null）。
+    var pendingFileCallback by remember {
+        mutableStateOf<ValueCallback<Array<Uri>>?>(null)
+    }
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val callback = pendingFileCallback
+        pendingFileCallback = null
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            callback?.onReceiveValue(
+                WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+            )
+        } else {
+            callback?.onReceiveValue(null)
+        }
     }
 
     AndroidView(
@@ -110,6 +172,40 @@ fun MainActivityContent() {
                     }
                 }
 
+                // 「从电脑中打开」：input[type=file] 必须经 onShowFileChooser 才会弹出系统选择器，
+                // 否则 WebView 内点击无反应（文件菜单的「打开」不可用）。
+                webChromeClient = object : WebChromeClient() {
+                    override fun onShowFileChooser(
+                        webView: WebView?,
+                        filePathCallback: ValueCallback<Array<Uri>>,
+                        fileChooserParams: FileChooserParams
+                    ): Boolean {
+                        // 取消上一次未完成的回调，避免泄漏与状态错乱
+                        pendingFileCallback?.onReceiveValue(null)
+                        pendingFileCallback = filePathCallback
+                        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                            putExtra(
+                                Intent.EXTRA_MIME_TYPES,
+                                arrayOf(
+                                    "application/x-scratch-project", // .sb3 / .sb2
+                                    "application/octet-stream",
+                                    "application/zip"
+                                )
+                            )
+                        }
+                        return try {
+                            fileChooserLauncher.launch(intent)
+                            true
+                        } catch (_: Exception) {
+                            pendingFileCallback = null
+                            filePathCallback.onReceiveValue(null)
+                            false
+                        }
+                    }
+                }
+
                 // 加载打包进 assets 的 scratch-gui（含「资源离线包」功能）
                 loadUrl("file:///android_asset/index.html")
             }
@@ -119,7 +215,9 @@ fun MainActivityContent() {
 
 /**
  * JavaScript 接口：桥接 scratch-gui（Web 编辑器）与 Android 原生层。
- * - scratchSave / offlineDownload / offlineGetAsset 经 BRIDGE_SHIM 垫片转调 bridgePost(name, json)。
+ * - scratchSave：网页「保存到设备」经 BRIDGE_SHIM 的 anchor click 拦截转调 bridgePost，
+ *   解码 base64 后写入 Download/GudaoCode/（MediaStore）并 toast 提示（与 iOS 同款能力）；
+ * - offlineDownload / offlineGetAsset 经 BRIDGE_SHIM 垫片转调 bridgePost(name, json)。
  * - offlineDownload：原生 HttpURLConnection 并发下载（规避 CORS / HTML 兜底页），魔数校验后写入
  *   filesDir/OfflineAssets 并回推 hydrate；启动时 injectBridges 回推离线状态。
  */
@@ -198,9 +296,75 @@ private class JavaScriptInterface(
     @JavascriptInterface
     fun bridgePost(name: String, json: String) {
         when (name) {
-            "scratchSave" -> { /* 保存功能暂未实现；占位避免网页侧 JS 报错 */ }
+            "scratchSave" -> handleScratchSave(json)
             "offlineDownload" -> handleOfflineDownload(json)
             "offlineGetAsset" -> handleOfflineGetAsset(json)
+        }
+    }
+
+    // ---- 「保存到电脑」桥接（与 iOS ScratchBridge.scratchSave 同款） ----
+
+    /**
+     * 网页「保存到设备」：JS 垫片把 .sb3 的 base64 上报到此，
+     * 解码后写入公共下载目录 Download/GudaoCode/（MediaStore，minSdk 31 无需存储权限）。
+     */
+    private fun handleScratchSave(json: String) {
+        try {
+            val obj = JSONObject(json)
+            val name = sanitizeProjectName(obj.optString("name"))
+            val base64 = obj.optString("data")
+            if (base64.isEmpty()) {
+                showToast("保存失败：数据为空")
+                return
+            }
+            val data = Base64.decode(base64, Base64.DEFAULT)
+            if (data.isEmpty()) {
+                showToast("保存失败：无法解码保存的数据（内容为空或格式错误）")
+                return
+            }
+            if (saveProjectToDownloads(name, data)) {
+                showToast("保存成功！作品已保存至 下载/GudaoCode/$name")
+            } else {
+                showToast("保存失败：无法写入文件")
+            }
+        } catch (e: Exception) {
+            showToast("保存失败：${e.message ?: "未知错误"}")
+        }
+    }
+
+    /** 写入公共下载目录 Download/GudaoCode/（API 29+ 的 MediaStore 分区存储，无需存储权限）。 */
+    private fun saveProjectToDownloads(name: String, data: ByteArray): Boolean {
+        return try {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    "${Environment.DIRECTORY_DOWNLOADS}/GudaoCode"
+                )
+            }
+            val resolver = appContext.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return false
+            resolver.openOutputStream(uri)?.use { it.write(data) } ?: return false
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 清洗作品文件名：去掉路径分隔符等非法字符，并确保以 .sb3 结尾（与 iOS 同规则）。 */
+    private fun sanitizeProjectName(name: String): String {
+        var cleaned = name.replace(Regex("[/\\\\?%*|\"<>:]"), "_")
+        if (cleaned.isEmpty()) cleaned = "project"
+        if (!cleaned.lowercase().endsWith(".sb3")) cleaned += ".sb3"
+        return cleaned
+    }
+
+    private fun showToast(message: String) {
+        val act = activity ?: return
+        act.runOnUiThread {
+            Toast.makeText(act, message, Toast.LENGTH_LONG).show()
         }
     }
 
