@@ -90,8 +90,8 @@ fun MainActivityContent() {
                 addJavascriptInterface(jsInterface, "Android")
 
                 webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(view: WebView?, url: String?) {
-                        super.onPageStarted(view, url)
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                        super.onPageStarted(view, url, favicon)
                         // 文档加载早期注入：预置资产 map + 桥垫片（不含离线状态回推）。
                         // 若此时 document 未就绪导致注入失败，onPageFinished 的 injectBridges 会兜底。
                         if (view != null) {
