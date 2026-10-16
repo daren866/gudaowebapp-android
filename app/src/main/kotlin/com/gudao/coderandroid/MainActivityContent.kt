@@ -36,13 +36,11 @@ private const val OFFLINE_DIR = "OfflineAssets"
 private const val MAX_CONCURRENT = 4
 
 /**
- * 注入到页面的桥接脚本：
+ * 注入到页面的桥接脚本（不含离线状态回推行，由 buildInjectScript 动态拼接）：
  *  - 复用既有 window 桥（dialog / statusbar / file / image）；
  *  - 定义 window.webkit.messageHandlers.{scratchSave,offlineDownload,offlineGetAsset}，
  *    其 postMessage 转调 Android.bridgePost(name, json)（Android WebView 无 iOS 的
- *    window.webkit.messageHandlers API，需此垫片让网页侧代码无需改动即可复用）；
- *  - 最后回推离线状态（__scratchOfflineInit）。
- * __INIT_JSON__ 在运行时替换为离线状态 JSON。
+ *    window.webkit.messageHandlers API，需此垫片让网页侧代码无需改动即可复用）。
  */
 private const val BRIDGE_SHIM = """
     window.dialog = function(message, title) { Android.showDialog(title, message); };
@@ -60,7 +58,6 @@ private const val BRIDGE_SHIM = """
             postMessage: function(msg){ Android.bridgePost(n, JSON.stringify(msg)); }
         };
     });
-    window.__scratchOfflineInit && window.__scratchOfflineInit(__INIT_JSON__);
 """
 
 @Composable
@@ -93,6 +90,15 @@ fun MainActivityContent() {
                 addJavascriptInterface(jsInterface, "Android")
 
                 webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?) {
+                        super.onPageStarted(view, url)
+                        // 文档加载早期注入：预置资产 map + 桥垫片（不含离线状态回推）。
+                        // 若此时 document 未就绪导致注入失败，onPageFinished 的 injectBridges 会兜底。
+                        if (view != null) {
+                            view.evaluateJavascript(jsInterface.buildInjectScript(withInit = false), null)
+                        }
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (view != null) jsInterface.injectBridges(view)
                     }
@@ -196,13 +202,54 @@ private class JavaScriptInterface(
     fun injectBridges(view: WebView) {
         if (bridgesInjected) return
         bridgesInjected = true
-        val assets = offlineAssetList()
-        val initJson = JSONObject().apply {
-            put("enabled", assets.isNotEmpty())
-            put("assets", JSONArray(assets))
-        }.toString()
-        val script = BRIDGE_SHIM.replace("__INIT_JSON__", initJson)
+        val script = buildInjectScript(withInit = true)
         view.post { view.evaluateJavascript(script, null) }
+    }
+
+    /**
+     * 构建注入脚本：
+     *  1. window.__scratchBundledAssets = {md5ext: base64, ...}（随包预置资产，document 早期注入，
+     *     网页侧模块加载时同步消费，保证 VM 加载作品时 storage.load 命中缓存，无 hydrate 竞态）；
+     *  2. 桥垫片（BRIDGE_SHIM）；
+     *  3. withInit 时：兜底再消费一次预置资产 + 回推离线状态（__scratchOfflineInit）。
+     */
+    fun buildInjectScript(withInit: Boolean): String {
+        val sb = StringBuilder()
+        sb.append("window.__scratchBundledAssets = ").append(bundledAssetsJson).append(";\n")
+        if (withInit) {
+            // 兜底再消费一次预置资产（防止 onPageStarted 注入过早未执行）
+            sb.append("window.__scratchOfflineConsumeBundled && window.__scratchOfflineConsumeBundled();\n")
+        }
+        sb.append(BRIDGE_SHIM)
+        if (withInit) {
+            val assets = offlineAssetList()
+            val initJson = JSONObject().apply {
+                put("enabled", assets.isNotEmpty())
+                put("assets", JSONArray(assets))
+            }.toString()
+            sb.append("window.__scratchOfflineInit && window.__scratchOfflineInit(")
+                .append(initJson).append(");")
+        }
+        return sb.toString()
+    }
+
+    /** 预置资产 base64 map（assets/OfflineAssets，存放 default project 素材，惰性读取一次）。 */
+    private val bundledAssetsJson: String by lazy {
+        val map = JSONObject()
+        try {
+            val allowed = setOf("svg", "png", "jpg", "jpeg", "wav", "mp3")
+            val files = appContext.assets.list(OFFLINE_DIR) ?: emptyArray()
+            for (name in files) {
+                if (name.startsWith(".")) continue
+                val ext = name.substringAfterLast('.', "").lowercase()
+                if (ext !in allowed) continue
+                val data = appContext.assets.open("$OFFLINE_DIR/$name").use { it.readBytes() }
+                map.put(name, Base64.encodeToString(data, Base64.NO_WRAP))
+            }
+        } catch (_: Exception) {
+            // 无预置资产目录时为空 map
+        }
+        map.toString()
     }
 
     private fun handleOfflineDownload(json: String) {
@@ -220,10 +267,17 @@ private class JavaScriptInterface(
             executor.execute {
                 var ok = false
                 try {
-                    val data = downloadFirstValid(md5ext, urls)
-                    if (data != null && writeOfflineAsset(md5ext, data)) {
-                        pushOfflineAssetData(md5ext, data)
+                    // 本地已有（随包预置或此前下载过）则直接回推，不再走网络
+                    val existing = readOfflineAsset(md5ext)
+                    if (existing != null) {
+                        pushOfflineAssetData(md5ext, existing)
                         ok = true
+                    } else {
+                        val data = downloadFirstValid(md5ext, urls)
+                        if (data != null && writeOfflineAsset(md5ext, data)) {
+                            pushOfflineAssetData(md5ext, data)
+                            ok = true
+                        }
                     }
                 } catch (_: Exception) {
                     // 单个资产失败不阻断整体
@@ -316,22 +370,39 @@ private class JavaScriptInterface(
     }
 
     private fun readOfflineAsset(md5ext: String): ByteArray? {
-        val file = File(File(appContext.filesDir, OFFLINE_DIR), sanitizeAssetName(md5ext))
+        val name = sanitizeAssetName(md5ext)
+        // 用户下载的资产优先（filesDir/OfflineAssets），其次随包预置的资产（assets/OfflineAssets）
+        val userFile = File(File(appContext.filesDir, OFFLINE_DIR), name)
+        try {
+            if (userFile.exists()) return userFile.readBytes()
+        } catch (_: Exception) {
+            // 读用户资产失败则尝试预置资产
+        }
         return try {
-            file.readBytes()
+            appContext.assets.open("$OFFLINE_DIR/$name").use { it.readBytes() }
         } catch (_: Exception) {
             null
         }
     }
 
     private fun offlineAssetList(): List<String> {
-        val dir = File(appContext.filesDir, OFFLINE_DIR)
-        if (!dir.exists()) return emptyList()
         val allowed = setOf("svg", "png", "jpg", "jpeg", "wav", "mp3")
-        return (dir.listFiles() ?: emptyArray())
-            .filter { it.extension.lowercase() in allowed && !it.name.startsWith(".") }
-            .map { it.name }
-            .sorted()
+        val names = mutableSetOf<String>()
+        val dir = File(appContext.filesDir, OFFLINE_DIR)
+        if (dir.exists()) {
+            (dir.listFiles() ?: emptyArray())
+                .filter { it.extension.lowercase() in allowed && !it.name.startsWith(".") }
+                .forEach { names.add(it.name) }
+        }
+        // 合并随包预置的资产（assets/OfflineAssets）：default project 素材，免用户手动下载
+        try {
+            (appContext.assets.list(OFFLINE_DIR) ?: emptyArray())
+                .filter { it.substringAfterLast('.', "").lowercase() in allowed && !it.startsWith(".") }
+                .forEach { names.add(it) }
+        } catch (_: Exception) {
+            // 无预置资产目录时忽略
+        }
+        return names.sorted()
     }
 
     private fun sanitizeAssetName(name: String): String {
