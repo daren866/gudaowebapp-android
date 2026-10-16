@@ -64,7 +64,7 @@ private const val BRIDGE_SHIM = """
 fun MainActivityContent() {
     val context = LocalContext.current
     if (context is android.app.Activity) {
-        context.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        context.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
     AndroidView(
