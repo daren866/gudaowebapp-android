@@ -68,6 +68,19 @@ jobs:
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION_NAME}"
 
+      - name: Clean old APK assets from nightly release
+        run: |
+          TAG="android-nightly"
+          REPO="${{ github.repository }}"
+          REL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          REL_ID=$(echo "$REL" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+          if [ -z "$REL_ID" ]; then echo "release not found yet, skip cleanup"; exit 0; fi
+          APK_IDS=$(echo "$REL" | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(a['id']) for a in d.get('assets',[]) if a['name'].endswith('.apk')))" 2>/dev/null || echo "")
+          for AID in $APK_IDS; do
+            echo "deleting old APK asset $AID"
+            curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/$REPO/releases/assets/$AID" > /dev/null || true
+          done
+
       - name: Create / update Release (nightly)
         uses: softprops/action-gh-release@v1
         with:
