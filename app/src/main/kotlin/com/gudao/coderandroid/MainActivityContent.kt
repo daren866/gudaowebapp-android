@@ -218,14 +218,19 @@ private class JavaScriptInterface(
      *     网页侧模块加载时同步消费，保证 VM 加载作品时 storage.load 命中缓存，无 hydrate 竞态）；
      *  2. window.__scratchBundledIndex = [md5ext, ...]（随包预置资产全量清单：素材库 1300+ 资产，
      *     启动仅注入清单，网页侧拦截 storage.load 按需懒加载，避免全量 hydrate 拖垮内存）；
-     *  3. 桥垫片（BRIDGE_SHIM）；
-     *  4. withInit 时：兜底再消费一次预置资产 + 回推离线状态（__scratchOfflineInit，
-     *     仅推用户下载的资产；预置资产走懒加载，不在此逐个 hydrate）。
+     *  3. window.__scratchUserAssets = [md5ext, ...]（用户下载的作品资产清单，filesDir/OfflineAssets）；
+     *  4. 桥垫片（BRIDGE_SHIM）；
+     *  5. withInit 时：兜底再消费一次预置资产 + 回推离线状态（__scratchOfflineInit，
+     *     推用户下载的资产做 hydrate 预热；预置资产走懒加载，不在此逐个 hydrate）。
+     *
+     * 离线资源包无条件启用：本地资源（预置 + 用户下载）无论联网与否一律优先，
+     * 故 enabled 恒为 true。
      */
     fun buildInjectScript(withInit: Boolean): String {
         val sb = StringBuilder()
         sb.append("window.__scratchBundledAssets = ").append(bundledDefaultAssetsJson).append(";\n")
         sb.append("window.__scratchBundledIndex = ").append(bundledIndexJson).append(";\n")
+        sb.append("window.__scratchUserAssets = ").append(userAssetsJson).append(";\n")
         if (withInit) {
             // 兜底再消费一次预置资产（防止 onPageStarted 注入过早未执行）
             sb.append("window.__scratchOfflineConsumeBundled && window.__scratchOfflineConsumeBundled();\n")
@@ -234,7 +239,7 @@ private class JavaScriptInterface(
         if (withInit) {
             val assets = userDownloadedAssetList()
             val initJson = JSONObject().apply {
-                put("enabled", assets.isNotEmpty() || bundledIndex.isNotEmpty())
+                put("enabled", true)
                 put("assets", JSONArray(assets))
             }.toString()
             sb.append("window.__scratchOfflineInit && window.__scratchOfflineInit(")
@@ -271,6 +276,11 @@ private class JavaScriptInterface(
 
     private val bundledIndexJson: String by lazy {
         JSONArray(bundledIndex).toString()
+    }
+
+    /** 用户下载的资产清单（filesDir/OfflineAssets 文件名列表，惰性读取一次）。 */
+    private val userAssetsJson: String by lazy {
+        JSONArray(userDownloadedAssetList()).toString()
     }
 
     private fun handleOfflineDownload(json: String) {
