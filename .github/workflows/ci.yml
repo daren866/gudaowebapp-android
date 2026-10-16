@@ -13,9 +13,6 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
-    env:
-      ANDROID_COMPILE_SDK: "36"
-      ANDROID_BUILD_TOOLS: "36.0.0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,13 +25,28 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      # 手动安装 Android SDK（不依赖 android-actions/setup-android，那个动作内部会拉取
+      # 已被移除的 legacy `tools` 包而失败）。安装 cmdline-tools + 接受许可 + 装 platform 36。
+      - name: Install Android SDK
         run: |
-          sdkmanager "platforms;android-${{ env.ANDROID_COMPILE_SDK }}" "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" "platform-tools"
-          yes | sdkmanager --licenses || true
+          set -euo pipefail
+          export ANDROID_HOME="$HOME/Android/Sdk"
+          mkdir -p "$ANDROID_HOME"
+          cd "$HOME"
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip -O cmdline-tools.zip
+          rm -rf "$HOME/cmdline-tools-tmp"
+          unzip -q cmdline-tools.zip -d "$HOME/cmdline-tools-tmp"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mv "$HOME/cmdline-tools-tmp/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          rm -rf "$HOME/cmdline-tools-tmp" "$HOME/cmdline-tools.zip"
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMGR" --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1 || true
+          # 优先装指定 build-tools；若该版本不存在则退化为仅装 platform（AGP 会自动补齐 build-tools）
+          "$SDKMGR" --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.0.0" "platform-tools" || \
+            "$SDKMGR" --sdk_root="$ANDROID_HOME" "platforms;android-36" "platform-tools"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
@@ -52,7 +64,7 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION_NAME=$(grep -E 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | sed -E 's/.*"([^^"]+)".*/\1/' | head -1)
+          VERSION_NAME=$(grep -E 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION_NAME}"
 
