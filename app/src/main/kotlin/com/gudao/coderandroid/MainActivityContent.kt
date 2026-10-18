@@ -14,6 +14,7 @@ import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -203,6 +204,14 @@ fun MainActivityContent() {
                             filePathCallback.onReceiveValue(null)
                             false
                         }
+                    }
+
+                    // 摄像头 / 麦克风：scratch-gui 的「视频侦测」「声音」扩展经 getUserMedia 请求设备权限，
+                    // 默认直接授予（与 iOS 端 requestMediaCapturePermissionFor 返回 .grant 同款行为），
+                    // 避免 WebView 默认拒绝导致摄像头/麦克风不可用。
+                    // 注意：系统级「App 是否允许访问相机/麦克风」的首次弹窗仍由用户确认一次，无法绕过。
+                    override fun onPermissionRequest(request: PermissionRequest) {
+                        this@apply.post { request.grant(request.resources) }
                     }
                 }
 
