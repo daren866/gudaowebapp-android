@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Message
 import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
@@ -17,6 +18,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -153,12 +155,53 @@ fun MainActivityContent() {
                     allowFileAccessFromFileURLs = true
                     allowUniversalAccessFromFileURLs = true
                     mediaPlaybackRequiresUserGesture = false
+                    // 允许 target="_blank" 外部链接触发 onCreateWindow，从而弹确认框
+                    setSupportMultipleWindows(true)
                 }
 
                 val jsInterface = JavaScriptInterface(ctx, this)
                 addJavascriptInterface(jsInterface, "Android")
 
+                // 第三方链接拦截：跳转到应用外部 http/https 链接前，弹原生确认框，
+                // 让用户选择「跳转」（用系统浏览器打开）或「取消」。不影响 WebView 内 SPA 的
+                // hash 路由与 file:// 资源加载；仅对主框架/新窗口的外部 http/https 导航生效。
+                fun confirmOpenExternal(url: String): Boolean {
+                    if (!url.startsWith("http://") && !url.startsWith("https://")) return false
+                    val act = context as? MainActivity ?: return false
+                    act.runOnUiThread {
+                        android.app.AlertDialog.Builder(act)
+                            .setTitle("提示")
+                            .setMessage("是否使用系统浏览器打开网页？")
+                            .setPositiveButton("跳转") { _, _ ->
+                                try {
+                                    act.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                } catch (_: Exception) {
+                                    // 设备上无可用浏览器时不报错
+                                }
+                            }
+                            .setNegativeButton("取消") { dialog, _ -> dialog.dismiss() }
+                            .show()
+                    }
+                    return true
+                }
+
                 webViewClient = object : WebViewClient() {
+                    // 当前窗口导航（含 window.open 不带 _blank、location.href 改写等）
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: WebResourceRequest?
+                    ): Boolean {
+                        val url = request?.url?.toString() ?: return false
+                        return confirmOpenExternal(url)
+                    }
+
+                    // 兼容 API < 24：旧签名重载
+                    @Suppress("DEPRECATION")
+                    override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                        if (url == null) return false
+                        return confirmOpenExternal(url)
+                    }
+
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                         super.onPageStarted(view, url, favicon)
                         // 文档加载早期注入：预置资产 map + 桥垫片（不含离线状态回推）。
@@ -213,6 +256,23 @@ fun MainActivityContent() {
                     override fun onPermissionRequest(request: PermissionRequest) {
                         this@apply.post { request.grant(request.resources) }
                     }
+
+                    // target="_blank" 外部链接：默认会走此处而非 shouldOverrideUrlLoading。
+                    // 我们拦截 URL 弹确认框，返回 false 表示不创建新窗口（由系统浏览器承接打开）。
+                    override fun onCreateWindow(
+                        view: WebView?,
+                        isDialog: Boolean,
+                        isUserGesture: Boolean,
+                        resultMsg: Message?
+                    ): Boolean {
+                        val url = view?.hitTestResult?.extra
+                        if (!url.isNullOrEmpty()) confirmOpenExternal(url)
+                        return false
+                    }
+
+                    // 注：统一使用 4 参数 onCreateWindow（自 API 1 起始终被调用），
+                    // 通过 hitTestResult.extra 取被点击锚点的 URL；5 参数（带 WebResourceRequest）
+                    // 重载在当前编译基类中签名不匹配，已移除。
                 }
 
                 // 加载打包进 assets 的 scratch-gui（含「资源离线包」功能）
