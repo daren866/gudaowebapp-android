@@ -106,7 +106,33 @@ private const val BRIDGE_SHIM = """
             });
           return;
         }
+        // 外部 http/https 链接（真实点击或 JS click）：统一走原生确认框，
+        // 阻止 WebView 默认在应用内打开，改由系统浏览器承接
+        if (typeof this.href === 'string') {
+          var href0 = this.href;
+          if (href0.indexOf('http://') === 0 || href0.indexOf('https://') === 0) {
+            if (window.Android && window.Android.confirmOpenExternal) {
+              window.Android.confirmOpenExternal(href0);
+              return;
+            }
+          }
+        }
         return origClick.apply(this, arguments);
+      };
+    })();
+    (function () {
+      if (window.__gudaoWindowOpenInstalled) return;
+      window.__gudaoWindowOpenInstalled = true;
+      var origOpen = window.open;
+      window.open = function (url, target, features) {
+        if (typeof url === 'string' &&
+            (url.indexOf('http://') === 0 || url.indexOf('https://') === 0)) {
+          if (window.Android && window.Android.confirmOpenExternal) {
+            window.Android.confirmOpenExternal(url);
+          }
+          return null;
+        }
+        return origOpen.apply(this, arguments);
       };
     })();
 """
@@ -167,21 +193,7 @@ fun MainActivityContent() {
                 // hash 路由与 file:// 资源加载；仅对主框架/新窗口的外部 http/https 导航生效。
                 fun confirmOpenExternal(url: String): Boolean {
                     if (!url.startsWith("http://") && !url.startsWith("https://")) return false
-                    val act = context as? MainActivity ?: return false
-                    act.runOnUiThread {
-                        android.app.AlertDialog.Builder(act)
-                            .setTitle("提示")
-                            .setMessage("是否使用系统浏览器打开网页？")
-                            .setPositiveButton("跳转") { _, _ ->
-                                try {
-                                    act.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                } catch (_: Exception) {
-                                    // 设备上无可用浏览器时不报错
-                                }
-                            }
-                            .setNegativeButton("取消") { dialog, _ -> dialog.dismiss() }
-                            .show()
-                    }
+                    jsInterface.requestOpenExternal(url)
                     return true
                 }
 
@@ -306,6 +318,40 @@ private class JavaScriptInterface(
                 .setTitle(title)
                 .setMessage(message)
                 .setPositiveButton("确定") { dialog, _ -> dialog.dismiss() }
+                .show()
+        }
+    }
+
+    /**
+     * JS 桥：网页经 window.open / 外部 <a> 点击调用，统一弹出第三方链接确认框。
+     * 仅对外部 http/https 生效，其余 scheme 忽略（交还页面默认行为）。
+     */
+    @JavascriptInterface
+    fun confirmOpenExternal(url: String) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        requestOpenExternal(url)
+    }
+
+    /**
+     * 第三方链接确认框：标题「提示」，内容「是否使用系统浏览器打开网页？」，
+     * 正按钮「跳转」（ACTION_VIEW 调系统浏览器），负按钮「取消」。
+     * 供 JS 桥（window.open / 外部链接点击）与 WebView 原生回调（shouldOverrideUrlLoading /
+     * onCreateWindow）统一调用，保证无论用户点击还是 JS 跳转都弹同一确认框。
+     */
+    internal fun requestOpenExternal(url: String) {
+        val act = activity ?: return
+        act.runOnUiThread {
+            android.app.AlertDialog.Builder(act)
+                .setTitle("提示")
+                .setMessage("是否使用系统浏览器打开网页？")
+                .setPositiveButton("跳转") { _, _ ->
+                    try {
+                        act.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    } catch (_: Exception) {
+                        // 设备上无可用浏览器时不报错
+                    }
+                }
+                .setNegativeButton("取消") { dialog, _ -> dialog.dismiss() }
                 .show()
         }
     }
