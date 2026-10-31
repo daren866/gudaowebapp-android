@@ -5,3 +5,6 @@ build
 build-cache
 generated
 local.properties
+
+# 上传密钥（AGC 方式二，不入库）
+app/upload-keystore.jks

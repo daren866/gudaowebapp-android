@@ -23,6 +23,16 @@ kotlin {
     jvmToolchain(libs.versions.jdk.get().toInt())
 }
 
+// 读取 release 上传密钥配置（来自 gradle.properties；密钥库 app/upload-keystore.jks 已在 .gitignore 忽略，不入库）
+val uploadStoreFile = project.findProperty("UPLOAD_STORE_FILE")?.toString()
+    ?: error("缺少 gradle.properties 的 UPLOAD_STORE_FILE")
+val uploadKeyAlias = project.findProperty("UPLOAD_KEY_ALIAS")?.toString()
+    ?: error("缺少 gradle.properties 的 UPLOAD_KEY_ALIAS")
+val uploadStorePassword = project.findProperty("UPLOAD_STORE_PASSWORD")?.toString()
+    ?: error("缺少 gradle.properties 的 UPLOAD_STORE_PASSWORD")
+val uploadKeyPassword = project.findProperty("UPLOAD_KEY_PASSWORD")?.toString()
+    ?: error("缺少 gradle.properties 的 UPLOAD_KEY_PASSWORD")
+
 android {
     namespace = "com.gudao.coderandroid"
     compileSdk = libs.versions.compile.sdk.get().toInt()
@@ -42,11 +52,22 @@ android {
             storeFile = rootProject.file(".github/debug-key.jks")
             storePassword = "password"
         }
+        // 发布用上传密钥（AppGallery 方式二）：用此密钥签名后上传，AGC 校验后重签分发
+        create("release") {
+            keyAlias = uploadKeyAlias
+            keyPassword = uploadKeyPassword
+            storeFile = file(uploadStoreFile)
+            storePassword = uploadStorePassword
+        }
     }
 
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("debug")
+        }
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
         }
     }
 
