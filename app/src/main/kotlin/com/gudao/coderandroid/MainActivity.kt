@@ -12,21 +12,39 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import java.io.BufferedReader
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.InputStreamReader
+import kotlin.system.exitProcess
 
 const val REQUEST_CODE_WRITE_STORAGE = 1001
+private const val PREFS_NAME = "app_prefs"
+private const val KEY_AGREED_TERMS = "agreed_terms"
 
 class MainActivity : ComponentActivity() {
     private var pendingSaveImageCallback: ((Boolean, String) -> Unit)? = null
@@ -52,7 +70,94 @@ class MainActivity : ComponentActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         hideSystemBars()
         setContent {
-            MainActivityContent()
+            // 首次启动同意闸门：未同意前不加载 WebView，避免未经同意即联网/写 localStorage
+            var consented by remember {
+                mutableStateOf(
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getBoolean(KEY_AGREED_TERMS, false)
+                )
+            }
+            // 查看协议用的临时查看器：非空时显示对应 assets HTML
+            var viewerAsset by remember { mutableStateOf<String?>(null) }
+
+            if (consented) {
+                MainActivityContent()
+            }
+
+            if (!consented) {
+                AlertDialog(
+                    // 必须二选一，禁止点击外部或返回关闭
+                    onDismissRequest = { },
+                    title = { Text("用户协议与隐私政策") },
+                    text = {
+                        Column {
+                            Text("欢迎使用 Gudaocode。在进入应用前，请阅读并同意以下协议：")
+                            Spacer(Modifier.height(8.dp))
+                            Row {
+                                TextButton(onClick = { viewerAsset = "privacy.html" }) {
+                                    Text("《隐私政策》")
+                                }
+                                TextButton(onClick = { viewerAsset = "user_agreement.html" }) {
+                                    Text("《用户协议》")
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text("若不同意，应用将退出。", color = ComposeColor.Gray)
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .edit()
+                                .putBoolean(KEY_AGREED_TERMS, true)
+                                .apply()
+                            consented = true
+                        }) { Text("同意并继续") }
+                    },
+                    dismissButton = {
+                        Button(onClick = { finishAndExit() }) { Text("不同意并退出") }
+                    }
+                )
+            }
+
+            viewerAsset?.let { asset ->
+                val title = if (asset == "privacy.html") "隐私政策" else "用户协议"
+                Dialog(
+                    onDismissRequest = { viewerAsset = null },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        color = ComposeColor.White
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(title)
+                                TextButton(onClick = { viewerAsset = null }) { Text("关闭") }
+                            }
+                            AndroidView(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .weight(1f),
+                                factory = { ctx ->
+                                    WebView(ctx).apply {
+                                        settings.javaScriptEnabled = false
+                                        loadUrl("file:///android_asset/$asset")
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -71,6 +176,12 @@ class MainActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             hide(WindowInsetsCompat.Type.systemBars())
         }
+    }
+
+    private fun finishAndExit() {
+        finish()
+        // 仅此一个 Activity，直接结束进程以保证「不同意即退出」生效
+        exitProcess(0)
     }
 
     fun setStatusBarColorFromWeb(color: Int) {
