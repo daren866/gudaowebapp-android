@@ -54,6 +54,33 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Reconstruct signing keystore (from secret, if provided)
+        run: |
+          if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > app/upload-keystore.jks
+            echo "upload-keystore.jks restored from secret"
+          else
+            echo "SIGNING_KEYSTORE_BASE64 not set; will build debug-signed AAB as fallback"
+          fi
+
+      - name: Build AAB (release if keystore present, else debug)
+        run: |
+          if [ -f app/upload-keystore.jks ]; then
+            ./gradlew bundleRelease --no-daemon
+          else
+            ./gradlew bundleDebug --no-daemon
+          fi
+
+      - name: Locate AAB
+        id: aab
+        run: |
+          AAB=$(find app/build/outputs/bundle/release -name "*.aab" -type f | head -1)
+          if [ -z "$AAB" ]; then
+            AAB=$(find app/build/outputs/bundle -name "*.aab" -type f | head -1)
+          fi
+          echo "aab_path=$AAB" >> "$GITHUB_OUTPUT"
+          echo "Found AAB: $AAB"
+
       - name: Locate APK
         id: apk
         run: |
@@ -75,7 +102,7 @@ jobs:
           REL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
           REL_ID=$(echo "$REL" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
           if [ -z "$REL_ID" ]; then echo "release not found yet, skip cleanup"; exit 0; fi
-          APK_IDS=$(echo "$REL" | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(a['id']) for a in d.get('assets',[]) if a['name'].endswith('.apk')))" 2>/dev/null || echo "")
+          APK_IDS=$(echo "$REL" | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(str(a['id']) for a in d.get('assets',[]) if a['name'].endswith(('.apk','.aab')))" 2>/dev/null || echo "")
           for AID in $APK_IDS; do
             echo "deleting old APK asset $AID"
             curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/$REPO/releases/assets/$AID" > /dev/null || true
@@ -93,6 +120,9 @@ jobs:
             - 版本: ${{ steps.version.outputs.version_name }}
             - 提交: ${{ github.sha }}
             - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 产物: APK（调试签名）+ AAB（配置签名密钥时为 Release 签名，否则 Debug 签名）
           prerelease: true
-          files: ${{ steps.apk.outputs.apk_path }}
+          files: |
+            ${{ steps.apk.outputs.apk_path }}
+            ${{ steps.aab.outputs.aab_path }}
           token: ${{ secrets.GITHUB_TOKEN }}
